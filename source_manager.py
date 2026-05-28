@@ -10,7 +10,8 @@ import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
-from datetime import datetime, timezone  # <-- ADD THIS LINE
+from datetime import datetime, timezone
+import requests as http_requests
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
