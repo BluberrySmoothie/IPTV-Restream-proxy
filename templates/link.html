@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex flex-wrap gap-3 align-items-center mb-3">
+  <div class="btn-group btn-group-sm">
+    <a href="/ui/link" class="btn {% if not current_group %}btn-secondary{% else %}btn-outline-secondary{% endif %}">All Channels</a>
+    {% for g in groups %}
+    <a href="/ui/link?group={{ g|urlencode }}" class="btn {% if current_group==g %}btn-secondary{% else %}btn-outline-secondary{% endif %}">{{ g }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="d-flex gap-3 align-items-center ms-auto">
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" id="toggleUnlinkedOnly" checked onchange="processFilters()">
+      <label class="form-check-label small text-light" for="toggleUnlinkedOnly">Unlinked Only</label>
+    </div>
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" id="toggleShowHidden" onchange="processFilters()">
+      <label class="form-check-label small text-light" for="toggleShowHidden">Show Hidden Streams</label>
+    </div>
+
+    <form method="post" class="mb-0">
+      <input type="hidden" name="_action" value="auto_link">
+      <button class="btn btn-sm btn-outline-info">
+        <i class="bi bi-magic me-1"></i>Auto-Link TVG-ID
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3" style="height:calc(100vh - 170px); min-height:550px;">
+  <div class="col-12 col-md-4 d-flex flex-column h-100">
+    <div class="card border-0 bg-body-secondary flex-grow-1 d-flex flex-column overflow-hidden">
+      <div class="p-2 border-bottom bg-dark bg-opacity-20">
+        <input type="search" id="channelSearch" class="form-control form-control-sm" placeholder="Filter Channel Targets..." oninput="filterChannels(this.value)">
+      </div>
+      <div class="list-group list-group-flush overflow-y-auto flex-grow-1" id="channelList">
+        {% for c in channels %}
+        <button type="button" class="list-group-item list-group-item-action py-2 channel-item text-start d-flex align-items-center justify-content-between" data-id="{{ c.id }}" data-name="{{ c.name }}" onclick="selectChannel(this)">
+          <div>
+            <div class="fw-semibold text-light small lh-sm">{{ c.name }}</div>
+            <div class="text-secondary" style="font-size:0.75rem;">{{ c.group_title or 'Unsorted' }}</div>
+          </div>
+          <span class="badge bg-dark text-secondary font-monospace border border-secondary border-opacity-20 small">{{ c.id }}</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-8 d-flex flex-column h-100">
+    <div class="card border-0 bg-body-secondary flex-grow-1 d-flex flex-column overflow-hidden">
+      <div class="table-responsive flex-grow-1 overflow-y-auto">
+        <table class="table table-hover table-sm align-middle mb-0 text-nowrap" id="streamTable">
+          <thead class="table-dark sticky-top">
+            <tr>
+              <th scope="col" style="width: 40px;">Vis</th>
+              <th scope="col">Source</th>
+              <th scope="col">Stream Name / Path</th>
+              <th scope="col">Group</th>
+              <th scope="col" style="width: 80px;" class="text-center">Link</th>
+            </tr>
+            <tr class="bg-body-tertiary">
+              <td></td>
+              <td><input type="text" class="form-control form-control-xs col-filter" placeholder="Filter..." data-field="source_name" oninput="processFilters()"></td>
+              <td><input type="text" class="form-control form-control-xs col-filter" placeholder="Filter Name/URL..." data-field="raw_name_url" oninput="processFilters()"></td>
+              <td><input type="text" class="form-control form-control-xs col-filter" placeholder="Filter Group..." data-field="raw_group" oninput="processFilters()"></td>
+              <td></td>
+            </tr>
+          </thead>
+          <tbody id="streamTableBody">
+            </tbody>
+        </table>
+      </div>
+
+      <div class="card-footer d-flex align-items-center justify-content-between py-2 border-top bg-dark bg-opacity-10">
+        <div class="text-secondary small" id="paginationMetrics">Showing 0 to 0 of 0 matching items</div>
+        <nav>
+          <ul class="pagination pagination-sm mb-0 gap-1" id="paginationControls">
+            </ul>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="selectedBadge" class="position-fixed bottom-0 start-50 translate-middle-x mb-4 bg-primary text-white px-4 py-2 rounded-pill shadow-lg d-flex align-items-center gap-3" style="display: none !important; z-index: 1050;">
+  <span class="small font-monospace text-uppercase tracking-wider opacity-75">Target Channel:</span>
+  <strong id="selectedName">None</strong>
+  <button type="button" class="btn-close btn-close-white btn-sm" onclick="clearSelectedChannel()"></button>
+</div>
+
+<style>
+  .form-control-xs { padding: 0.15rem 0.35rem; font-size: 0.75rem; border-radius: 0.2rem; }
+  .btn-xs { padding: 0.2rem 0.4rem; font-size: 0.75rem; border-radius: 0.25rem; }
+</style>
+
+{% endblock %}
+{% block scripts %}
+<script>
+// Safely inject Python database context cleanly into frontend JavaScript memory
+const allStreams = {{ unlinked|tojson }};
+let filteredStreams = [];
+let activeChannelId = null;
+let activeChannelName = "";
+let currentPage = 1;
+const itemsPerPage = 50;
+
+function selectChannel(el) {
+  document.querySelectorAll('.channel-item').forEach(i => i.classList.remove('active', 'bg-primary', 'bg-opacity-20'));
+  el.classList.add('active', 'bg-primary', 'bg-opacity-20');
+  
+  activeChannelId = el.getAttribute('data-id');
+  activeChannelName = el.getAttribute('data-name');
+  
+  // Refresh standard layout interactions
+  document.querySelectorAll('.target-channel-id-input').forEach(input => input.value = activeChannelId);
+  document.querySelectorAll('.link-btn').forEach(btn => {
+    btn.classList.remove('disabled');
+    btn.removeAttribute('disabled');
+    btn.removeAttribute('title');
+  });
+
+  document.getElementById('selectedName').textContent = activeChannelName;
+  document.getElementById('selectedBadge').style.setProperty('display', 'flex', 'important');
+}
+
+function clearSelectedChannel() {
+  activeChannelId = null;
+  activeChannelName = "";
+  document.querySelectorAll('.channel-item').forEach(i => i.classList.remove('active', 'bg-primary', 'bg-opacity-20'));
+  document.querySelectorAll('.link-btn').forEach(btn => {
+    btn.classList.add('disabled');
+    btn.setAttribute('disabled', 'true');
+  });
+  document.getElementById('selectedBadge').style.setProperty('display', 'none', 'important');
+}
+
+function submitToggleHide(entryId, checkbox) {
+  const isChecked = checkbox.checked;
+  
+  // Update internal JavaScript object state immediately
+  const streamObj = allStreams.find(s => s.id == entryId);
+  if (streamObj) {
+    streamObj.is_hidden = isChecked ? 1 : 0;
+  }
+  
+  const payload = new FormData();
+  payload.append('_action', 'toggle_hide');
+  payload.append('entry_id', entryId);
+  payload.append('current_state', isChecked ? 0 : 1);
+  
+  fetch(window.location.href, { method: 'POST', body: payload })
+    .then(() => {
+      // If we aren't showing hidden items, filter them out visually on click
+      if (!document.getElementById('toggleShowHidden').checked && isChecked) {
+        processFilters();
+      }
+    });
+}
+
+function processFilters() {
+  const showUnlinkedOnly = document.getElementById('toggleUnlinkedOnly').checked;
+  const showHidden = document.getElementById('toggleShowHidden').checked;
+
+  // Gather filter inputs
+  const filters = {};
+  document.querySelectorAll('.col-filter').forEach(input => {
+    const val = input.value.toLowerCase().trim();
+    if (val) filters[input.getAttribute('data-field')] = val;
+  });
+
+  // Filter full data set array
+  filteredStreams = allStreams.filter(item => {
+    const isLinked = item.channel_id !== null && item.channel_id !== undefined;
+    const isHidden = item.is_hidden === 1;
+
+    if (showUnlinkedOnly && isLinked) return false;
+    if (!showHidden && isHidden) return false;
+
+    if (filters.source_name && !String(item.source_name).toLowerCase().includes(filters.source_name)) return false;
+    if (filters.raw_group && !String(item.raw_group || 'unsorted').toLowerCase().includes(filters.raw_group)) return false;
+    
+    if (filters.raw_name_url) {
+      const matchName = String(item.raw_name || '').toLowerCase().includes(filters.raw_name_url);
+      const matchUrl = String(item.full_url || '').toLowerCase().includes(filters.raw_name_url);
+      if (!matchName && !matchUrl) return false;
+    }
+
+    return true;
+  });
+
+  currentPage = 1;
+  renderPage();
+}
+
+function renderPage() {
+  const totalItems = filteredStreams.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+  
+  if (currentPage > totalPages) currentPage = totalPages;
+  
+  const startIdx = (currentPage - 1) * itemsPerPage;
+  const endIdx = Math.min(startIdx + itemsPerPage, totalItems);
+
+  const tbody = document.getElementById('streamTableBody');
+  tbody.innerHTML = '';
+
+  // Render slice data into HTML rows
+  for (let i = startIdx; i < endIdx; i++) {
+    const e = filteredStreams[i];
+    const isLinked = e.channel_id !== null && e.channel_id !== undefined;
+    const rowHtml = `
+      <tr>
+        <td>
+          <div class="form-check form-check-inline m-0">
+            <input class="form-check-input hide-toggle" type="checkbox" 
+                   ${e.is_hidden ? 'checked' : ''}
+                   title="Toggle Hide Stream"
+                   onchange="submitToggleHide('${e.id}', this)">
+          </div>
+        </td>
+        <td class="small text-secondary">${e.source_name}</td>
+        <td>
+          <div class="fw-semibold text-light small text-truncate" style="max-width:280px;" title="${e.raw_name || ''}">${e.raw_name || ''}</div>
+          <div class="font-monospace text-secondary text-truncate" style="font-size:0.7rem; max-width:280px;" title="${e.full_url || ''}">${e.full_url || ''}</div>
+        </td>
+        <td><span class="badge bg-dark text-secondary border border-secondary border-opacity-10 small">${e.raw_group || 'Unsorted'}</span></td>
+        <td class="text-center">
+          <form method="post" action="?${window.location.search.substring(1)}" class="m-0">
+            <input type="hidden" name="_action" value="link">
+            <input type="hidden" name="entry_id" value="${e.id}">
+            <input type="hidden" name="channel_id" value="${activeChannelId || ''}" class="target-channel-id-input">
+            <button type="submit" 
+                    class="btn btn-xs btn-primary link-btn ${activeChannelId ? '' : 'disabled'}" 
+                    ${activeChannelId ? '' : 'disabled title="Select a channel target card on the left panel first."'}
+                    style="padding:1px 6px; font-size:0.75rem;">Link</button>
+          </form>
+        </td>
+      </tr>
+    `;
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+  }
+
+  // Update Bottom Metrics text
+  document.getElementById('paginationMetrics').textContent = 
+    totalItems > 0 ? `Showing ${startIdx + 1} to ${endIdx} of ${totalItems} matching items` : `Showing 0 to 0 of 0 matching items`;
+
+  renderControls(totalPages);
+}
+
+function renderControls(totalPages) {
+  const controls = document.getElementById('paginationControls');
+  controls.innerHTML = '';
+
+  if (totalPages <= 1) return;
+
+  const makeBtn = (targetPage, label, isActive = false) => {
+    const li = document.createElement('li');
+    li.className = `page-item ${isActive ? 'active' : ''}`;
+    const a = document.createElement('a');
+    a.className = 'page-link bg-dark bg-opacity-10 border-secondary border-opacity-10';
+    a.href = '#';
+    a.textContent = label;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      currentPage = targetPage;
+      renderPage();
+    });
+    li.appendChild(a);
+    controls.appendChild(li);
+  };
+
+  makeBtn(1, '«');
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, startPage + 4);
+  if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+
+  for (let p = startPage; p <= endPage; p++) {
+    makeBtn(p, p, p === currentPage);
+  }
+  makeBtn(totalPages, '»');
+}
+
+function filterChannels(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('.channel-item').forEach(el => {
+    el.style.setProperty('display', el.textContent.toLowerCase().includes(q) ? 'flex' : 'none', 'important');
+  });
+}
+
+// Fire filter computations on layout instantiation
+window.addEventListener('DOMContentLoaded', () => {
+  processFilters();
+});
+</script>
+{% endblock %}

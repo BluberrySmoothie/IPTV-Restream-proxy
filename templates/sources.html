@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span class="text-secondary">{{ sources|length }} source(s)</span>
+  <div class="d-flex gap-2">
+    {% if sources %}
+    <form method="post" action="/ui/sources" onsubmit="return confirm('Trigger background ffprobe analysis on all unprobed streams?')">
+      <input type="hidden" name="_action" value="probe_all">
+      <button type="submit" class="btn btn-outline-warning btn-sm">
+        <i class="bi bi-broadcast me-1"></i>Probe All Sources
+      </button>
+    </form>
+    {% endif %}
+    <a href="/ui/sources/new" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-lg me-1"></i>Add Source
+    </a>
+  </div>
+</div>
+
+{% if sources %}
+<div class="card border-0 bg-body-secondary">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Entries</th>
+          <th>Max Streams</th>
+          <th>Last Refresh</th>
+          <th>Next Refresh</th>
+          <th>Status</th>
+          <th class="actions-col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in sources %}
+      <tr>
+        <td><a href="/ui/sources/{{ s.id }}" class="fw-semibold text-decoration-none">{{ s.name }}</a></td>
+        <td><span class="badge bg-secondary">{{ s.type }}</span></td>
+        <td>{{ s.entry_count or 0 }}</td>
+        <td>{{ s.max_concurrent if s.max_concurrent else '∞' }}</td>
+        <td class="small text-secondary">
+          {% if s.last_refreshed_at %}{{ s.last_refreshed_at[:16] }}{% else %}Never{% endif %}
+        </td>
+        <td class="small text-secondary">
+          {% if s.refresh_interval_mins %}
+            Every {{ s.refresh_interval_mins }}m
+          {% elif s.refresh_times %}
+            Scheduled
+          {% else %}
+            Manual
+          {% endif %}
+        </td>
+        <td>
+          {% if s.status == 'ok' %}
+            <span class="badge bg-success">OK</span>
+          {% elif s.status == 'refreshing' %}
+            <span class="badge bg-warning text-dark">
+              <span class="spinner-border spinner-border-sm" style=\"width:.6rem;height:.6rem\"></span>
+              Refreshing
+            </span>
+          {% elif s.status == 'error' %}
+            <span class="badge bg-danger" title="{{ s.status_msg }}">Error</span>
+          {% else %}
+            <span class="badge bg-secondary">Idle</span>
+          {% endif %}
+        </td>
+        <td class="actions-col">
+          <form method="post" action="/ui/sources/{{ s.id }}" class="d-inline">
+            <input type="hidden" name="_action" value="refresh">
+            <button class="btn btn-xs btn-outline-info btn-sm" title="Refresh now">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </form>
+          <a href="/ui/sources/{{ s.id }}" class="btn btn-sm btn-outline-secondary ms-1">
+            <i class="bi bi-pencil"></i>
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="text-center py-5 text-secondary">
+  <i class="bi bi-collection-play fs-1 d-block mb-3"></i>
+  <p>No sources yet. Add an M3U URL or file layout rule above to get started.</p>
+  <p class="small">Import a source first, then link entries here.</p>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-4">
+  <div class="col-12 col-xl-5 mx-auto">
+    <div class="card border-0 bg-body-secondary">
+      <div class="card-body">
+        <form method="post" id="sourceMetaForm">
+          <input type="hidden" name="_action" value="save">
+
+          <div class="mb-3">
+            <label class="form-label small">Name</label>
+            <input type="text" name="name" class="form-control form-control-sm"
+                   value="{{ source.name if source else '' }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Type</label>
+            <select name="type" class="form-select form-select-sm">
+              <option value="url"  {% if not source or source.type=='url' %}selected{% endif %}>URL</option>
+              <option value="file" {% if source and source.type=='file' %}selected{% endif %}>Local file</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Location (URL or file path)</label>
+            <input type="text" name="location" class="form-control form-control-sm"
+                   value="{{ source.location if source else '' }}" required
+                   placeholder="http://provider/get.php?username=…&type=m3u">
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small" title="Max concurrent streams from this provider">Max Streams</label>
+              <input type="number" name="max_concurrent" class="form-control form-control-sm"
+                     value="{{ source.max_concurrent if source else 2 }}" min="1">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Auto-refresh (Mins)</label>
+              <input type="number" name="refresh_interval_mins" class="form-control form-control-sm"
+                     value="{{ source.refresh_interval_mins if source else 0 }}" min="0" placeholder="0 = disabled">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Specific Refresh Times (Comma separated 24hr, e.g. 04:00,16:00)</label>
+            <input type="text" name="refresh_times" class="form-control form-control-sm"
+                   value="{{ source.refresh_times if source else '' }}" placeholder="e.g. 05:00">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Notes / Provider Info</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2">{{ source.notes if source else '' }}</textarea>
+          </div>
+
+          <div class="d-flex justify-content-between mt-4">
+            <button type="submit" class="btn btn-success btn-sm px-4">
+              <i class="bi bi-check-lg me-1"></i>Save Configuration
+            </button>
+          </form>
+
+          {% if source %}
+          <form method="post" onsubmit="return confirm('Are you sure you want to delete this source? This will remove all associated raw entry definitions.');">
+            <input type="hidden" name="_action" value="delete">
+            <button type="submit" class="btn btn-danger btn-sm">
+              <i class="bi bi-trash3 me-1"></i>Delete Source
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

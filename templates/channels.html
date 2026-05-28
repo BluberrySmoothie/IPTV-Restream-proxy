@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Filter bar -->
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <a href="/ui/channels"
+     class="btn btn-sm {% if not current_group and not current_tag %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+    All
+  </a>
+  {% for g in groups %}
+  <a href="/ui/channels?group={{ g|urlencode }}"
+     class="btn btn-sm {% if current_group==g %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+    {{ g }}
+  </a>
+  {% endfor %}
+  {% for t in tags %}
+  <a href="/ui/channels?tag={{ t.name|urlencode }}"
+     class="btn btn-sm {% if current_tag==t.name %}btn-secondary{% else %}btn-outline-secondary{% endif %}"
+     style="border-color:{{ t.color }};{% if current_tag==t.name %}background:{{ t.color }};{% else %}color:{{ t.color }}{% endif %}">
+    {{ t.name }}
+  </a>
+  {% endfor %}
+
+  <div class="ms-auto d-flex gap-2">
+    <input type="search" id="chanSearch" class="form-control form-control-sm"
+           placeholder="Search…" style="width:180px">
+    <a href="/ui/channels/new" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-lg me-1"></i>New Channel
+    </a>
+  </div>
+</div>
+
+{% if channels %}
+<div class="card border-0 bg-body-secondary">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" id="chanTable">
+      <thead><tr>
+        <th style="width:3rem">#</th>
+        <th style="width:2.5rem"></th>
+        <th>Name</th>
+        <th>Group</th>
+        <th>Tags</th>
+        <th>Sources</th>
+        <th>Best Quality</th>
+        <th>Type</th>
+        <th class="actions-col">Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for c in channels %}
+      <tr class="entry-row">
+        <td class="text-secondary small">{{ c.number or '' }}</td>
+        <td>
+          {% set logo = (config_base_url + '/logos/' + c.logo_local) if c.logo_local else c.logo_url %}
+          {% if logo %}
+          <img src="{{ logo }}" class="logo-thumb" alt="">
+          {% else %}
+          <div class="logo-thumb d-flex align-items-center justify-content-center text-secondary">
+            <i class="bi bi-tv"></i>
+          </div>
+          {% endif %}
+        </td>
+        <td>
+          <a href="/ui/channels/{{ c.id }}" class="fw-semibold text-decoration-none">
+            {{ c.name }}
+          </a>
+          <div class="text-secondary" style="font-size:.75em;font-family:monospace">{{ c.id }}</div>
+        </td>
+        <td class="small text-secondary">{{ c.group_title or '—' }}</td>
+        <td>
+          {% if c.tag_names %}
+            {% for tag_name in c.tag_names.split(',') %}
+              {% for t in tags if t.name == tag_name %}
+                <span class="badge" style="background:{{ t.color }}">{{ tag_name }}</span>
+              {% endfor %}
+            {% endfor %}
+          {% endif %}
+        </td>
+        <td>
+          <span class="{% if c.sources_ok and c.sources_ok > 0 %}text-success{% else %}text-secondary{% endif %}">
+            {{ c.sources_ok or 0 }}
+          </span>
+          <span class="text-secondary">/{{ c.source_count or 0 }}</span>
+          <span class="text-secondary small"> ok</span>
+        </td>
+        <td class="resolution">
+          {% if c.best_width %}
+            {{ c.best_width }}×{{ c.best_height }}
+            {% if c.best_fps %}@ {{ "%.2f"|format(c.best_fps) }}fps{% endif %}
+          {% else %}
+            <span class="text-secondary small">not probed</span>
+          {% endif %}
+        </td>
+        <td>
+          {% set effective_type = c.stream_type if c.stream_type != 'auto' else (c.best_stream_type or 'live') %}
+          {% if effective_type == 'vod_movie' %}
+            <span class="badge" style="background:#6f42c1;font-size:.7em">Movie</span>
+          {% elif effective_type == 'vod_series' %}
+            <span class="badge" style="background:#0d6efd;font-size:.7em">Series</span>
+          {% else %}
+            <span class="badge bg-info text-dark" style="font-size:.7em">Live</span>
+          {% endif %}
+        </td>
+        <td class="actions-col">
+          <a href="/ui/channels/{{ c.id }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-pencil"></i>
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="text-center py-5 text-secondary">
+  <i class="bi bi-tv fs-1 d-block mb-3"></i>
+  <p>No channels yet.</p>
+  <p class="small">Channels are created manually or auto-discovered from linked entries.<br>
+     Import a source first, then link entries here.</p>
+  <a href="/ui/channels/new" class="btn btn-primary me-2">Create Channel</a>
+  <a href="/ui/sources" class="btn btn-outline-secondary">Manage Sources</a>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('chanSearch')?.addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('#chanTable tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+</script>
+{% endblock %}
