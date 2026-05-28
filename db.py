@@ -429,6 +429,49 @@ def update_entry_probe(entry_id: int, probe_status: str,
              score, _now(), entry_id),
         )
 
+def save_source_entries_batch(source_id: int, entries: list):
+    """
+    Performs a high-speed batch atomic upsert for all parsed M3U items.
+    Inserts missing items or updates attributes if the stream_key exists for this source.
+    """
+    if not entries:
+        return
+
+    query = """
+    INSERT INTO channel_entries (
+        source_id, stream_key, full_url, raw_name, raw_group, 
+        tvg_id, tvg_logo, stream_type, last_seen, is_stale
+    ) VALUES (
+        ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, 0
+    ) ON CONFLICT(source_id, stream_key) DO UPDATE SET
+        full_url = EXCLUDED.full_url,
+        raw_name = EXCLUDED.raw_name,
+        raw_group = EXCLUDED.raw_group,
+        tvg_id = EXCLUDED.tvg_id,
+        tvg_logo = EXCLUDED.tvg_logo,
+        stream_type = EXCLUDED.stream_type,
+        last_seen = EXCLUDED.last_seen,
+        is_stale = 0
+    """
+    
+    now_str = _now()
+    
+    with get_db() as conn:
+        conn.executemany(query, [
+            (
+                source_id,
+                e["stream_key"],
+                e["url"],
+                e["name"],
+                e["group"],
+                e["tvg_id"] or None,
+                e["tvg_logo"] or None,
+                e["stream_type"],
+                now_str
+            ) for e in entries
+        ])
+
 def get_best_entries_for_channel(channel_id: str):
     """Fetches linked stream configurations prioritised by quality and user rules."""
     with get_db() as conn:

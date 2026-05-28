@@ -174,168 +174,81 @@ def _fetch_m3u(source: db.sqlite3.Row) -> str:
 
 # ── Refresh logic ─────────────────────────────────────────────────────────────
 def refresh_source(source_id: int):
-    """Refreshes an M3U source by parsing its content and doing a fast batch insert."""
+    """
+    Worker job executed by APScheduler or manual UI dispatch.
+    Downloads/reads the raw M3U playlist file content, processes its tracks,
+    performs an atomic batch upsert operation, flags missing entries as stale,
+    and retires ancient entries beyond the source's retention period.
+    """
+    log.info("Refreshing source ID %d ...", source_id)
     source = db.get_source(source_id)
     if not source:
+        log.error("Cannot refresh source %d: Source records missing from DB.", source_id)
         return
-
-    log.info("Refreshing source '%s' (%s) …", source_id, source["name"])
-    # FIXED: Uses set_source_status
-    db.set_source_status(source_id, "refreshing", "Reading M3U contents...")
 
     try:
-        # Handle local files vs remote URLs correctly
-        if source["type"] == "file":
-            if not os.path.exists(source["location"]):
-                raise FileNotFoundError(f"Local file not found at: {source['location']}")
-            with open(source["location"], "r", encoding="utf-8", errors="ignore") as f:
+        db.set_source_status(source_id, "refreshing")
+        location = source["location"]
+        content = ""
+
+        # 1. Ingest content from either a remote HTTP URL endpoint or a local directory file
+        if location.startswith("http://") or location.startswith("https://"):
+            headers = {}
+            # Mirror the Android User Agent masquerade string configuration if present
+            if hasattr(config, "FFMPEG_ANDROID_HEADERS"):
+                # Clean up carriage returns for standard requests dictionary ingestion
+                for line in config.FFMPEG_ANDROID_HEADERS.split("\r\n"):
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        headers[k.strip()] = v.strip()
+
+            timeout = getattr(config, "M3U_REQUEST_TIMEOUT", 30)
+            res = http_requests.get(location, headers=headers, timeout=timeout)
+            res.raise_for_status()
+            content = res.text
+        else:
+            if not os.path.isfile(location):
+                raise FileNotFoundError(f"Local playlist asset location not found: {location}")
+            with open(location, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-        else:
-            # Remote URL
-            resp = http_requests.get(source["location"], timeout=config.M3U_REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            content = resp.text
 
-        # Parse M3U
-        lines = content.splitlines()
-        if not lines or not lines[0].startswith("#EXTM3U"):
-            raise ValueError("Invalid M3U playlist format: Missing #EXTM3U header.")
-
-        current_attrs = {}
-        current_title = ""
-        batch_data = []
-        now_str = datetime.now(timezone.utc).isoformat()
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            if line.startswith("#EXTINF:"):
-                current_title = ""
-                current_attrs = {}
-                comma_idx = line.find(",")
-                if comma_idx != -1:
-                    current_title = line[comma_idx+1:].strip()
-                    meta_part = line[:comma_idx]
-                else:
-                    meta_part = line
-                
-                for m in re.finditer(r'([a-zA-Z0-9_\-]+)=\"([^\"]*)\"', meta_part):
-                    current_attrs[m.group(1).lower()] = m.group(2)
-                    
-            elif line.startswith("#") or line.startswith("http") or line.find("/") != -1:
-                if line.startswith("#"):
-                    continue
-                
-                url = line
-                url_lower = url.lower()
-
-                # Exclude VOD Content
-                if "/movie/" in url_lower or "/series/" in url_lower:
-                    current_attrs = {}
-                    continue
-
-                parsed = urlparse(url)
-                stream_key = os.path.basename(parsed.path) or str(hash(url))
-                detected_type = _detect_stream_type(url, current_attrs.get("group-title", ""), current_attrs)
-
-                batch_data.append((
-                    source_id,
-                    stream_key,
-                    url,
-                    current_title or stream_key,
-                    current_attrs.get("group-title", "Unsorted"),
-                    current_attrs.get("tvg-id", ""),
-                    current_attrs.get("tvg-logo", ""),
-                    detected_type,
-                    now_str
-                ))
-                current_attrs = {}
-
-        log.info("Dumping data via fast batch database operations for source %d...", source_id)
+        # 2. Parse streams line-by-line out of the raw text blob file payload
+        parsed_tracks = parse_m3u(content)
         
-        with db.get_db() as conn:
-            # Clear old entries for this source
-            conn.execute("DELETE FROM channel_entries WHERE source_id = ?", (source_id,))
-            
-            # Fast batch insert
-            conn.executemany(
-                """INSERT INTO channel_entries (
-                    source_id, stream_key, full_url, raw_name, 
-                    raw_group, tvg_id, tvg_logo, stream_type, last_seen
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                batch_data
-            )
+        # 3. In-Memory Deduplication: Protects SQLite constraint structures
+        # If the provider's playlist accidentally lists the same stream multiple times in a single dump,
+        # we isolate and preserve only the first appearance of that key.
+        entries_to_save = []
+        seen_keys = set()
+        
+        for track in parsed_tracks:
+            sk = track.get("stream_key")
+            if not sk:
+                continue
+            if sk in seen_keys:
+                continue
+            seen_keys.add(sk)
+            entries_to_save.append(track)
 
-            # Update metrics inline
-            conn.execute(
-                """UPDATE sources 
-                   SET entry_count = ?, status = 'ok', status_msg = 'Refreshed successfully.', last_refreshed_at = ?
-                   WHERE id = ?""",
-                (len(batch_data), now_str, source_id)
-            )
-            
-        log.info("Successfully loaded %d entries into database.", len(batch_data))
+        log.info("Dumping %d unique tracks via fast batch database operations for source %d...", len(entries_to_save), source_id)
 
-    except Exception as exc:
-        msg = str(exc)
-        log.error("Source %d error: %s", source_id, msg)
-        # FIXED: Make sure the error handler block also points to set_source_status!
-        db.set_source_status(source_id, "error", msg)
+        # 4. Perform High-Speed Atomic Upsert (Insert new, Update existing changed attributes)
+        db.save_source_entries_batch(source_id, entries_to_save)
 
-       
-def probe_source_entries(source_id: int):
-    """
-    Probe all entries for a source concurrently and store resolution/fps.
-    """
-    entries = db.list_entries(source_id=source_id)
-    if not entries:
-        log.info("No entries to probe", source_id)
-        return
+        # 5. Retention Tracking Matrix: Identify items skipped / dropped during this sync run
+        stale_days = source["stale_days"] if source["stale_days"] else getattr(config, "DEFAULT_STALE_DAYS", 7)
+        db.mark_stale_entries(source_id, stale_days)
 
-    log.info("Probing %d entries (this may take a while)…",
-             source_id, len(entries))
-    db.set_source_status(source_id, "probing")
+        # 6. Purge Cycle: Permanently drop records that have exceeded their retention life threshold limits
+        db.delete_stale_entries(source_id)
 
-    def _probe(entry):
-        result = probe_stream(entry["full_url"])
-        if result.ok:
-            db.update_entry_probe(
-                entry["id"], "ok",
-                codec   = result.codec,
-                width   = result.width,
-                height  = result.height,
-                fps     = result.fps,
-                bitrate = result.bitrate,
-            )
-            log.info("  [entry:%d] OK  %s %dx%d@%.2ffps  %s",
-                     entry["id"], result.codec, result.width, result.height,
-                     result.fps, entry["raw_name"] or entry["stream_key"])
-        else:
-            db.update_entry_probe(entry["id"], "error", error=result.error)
-            log.info("  [entry:%d] ERR %s  %s",
-                     entry["id"], result.error,
-                     entry["raw_name"] or entry["stream_key"])
-        return result.ok
+        # 7. Finalize source properties counters cleanly
+        db.set_source_refreshed(source_id, len(entries_to_save))
+        log.info("Source %d refresh cycle completed successfully.", source_id)
 
-    with ThreadPoolExecutor(max_workers=config.MAX_PROBE_WORKERS) as pool:
-        futures = [pool.submit(_probe, e) for e in entries]
-        ok = err = 0
-        for fut in as_completed(futures):
-            try:
-                if fut.result():
-                    ok += 1
-                else:
-                    err += 1
-            except Exception as exc:
-                log.warning("Probe worker error: %s", exc)
-                err += 1
-
-    db.set_source_probe_done(source_id, ok, err)
-    db.set_source_status(source_id, "ok")
-    log.info("Probe complete — %d ok, %d error out of %d entries",
-             source_id, ok, err, len(entries))
+    except Exception as e:
+        log.error("Source %d error: %s", source_id, e)
+        db.set_source_status(source_id, "error", str(e))
 
 
 def probe_channel_entries(channel_id: str):

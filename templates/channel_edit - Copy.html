@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-4">
+
+  <div class="col-12 col-xl-4">
+
+    <div class="card border-0 bg-body-secondary mb-3">
+      <div class="card-body text-center py-3">
+        {% set logo = ('/logos/' + channel.logo_local) if (channel and channel.logo_local) else (channel.logo_url if channel else '') %}
+        {% if logo %}
+          <img src="{{ logo }}" class="mb-2"
+               style="height:80px;max-width:140px;object-fit:contain;background:#2d3035;border-radius:8px;padding:6px">
+        {% else %}
+          <div class="d-flex align-items-center justify-content-center mb-2 mx-auto"
+               style="width:80px;height:80px;background:#2d3035;border-radius:8px">
+            <i class="bi bi-tv fs-2 text-secondary"></i>
+          </div>
+        {% endif %}
+        {% if channel %}
+        <form method="post" class="mt-1">
+          <input type="hidden" name="_action" value="download-logo">
+          <button type="submit" class="btn btn-outline-secondary btn-sm w-100"
+                  {% if not channel.logo_url %}disabled title="Set a logo URL first"{% endif %}>
+            <i class="bi bi-cloud-download me-1"></i>Download Logo
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card border-0 bg-body-secondary">
+      <div class="card-body">
+        <form method="post" id="metaForm">
+          <input type="hidden" name="_action" value="save">
+
+          {% if not channel %}
+          <div class="mb-3">
+            <label class="form-label small">Channel ID (slug)</label>
+            <input type="text" name="id" class="form-control form-control-sm"
+                   required placeholder="bbc-one">
+            <div class="form-text">Lowercase, no spaces. Used in stream URLs.</div>
+          </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="form-label small">Display Name</label>
+            <input type="text" name="name" class="form-control form-control-sm"
+                   value="{{ channel.name if channel else '' }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Channel Number</label>
+            <input type="number" name="number" class="form-control form-control-sm"
+                   value="{{ channel.number if channel and channel.number else '' }}"
+                   placeholder="e.g. 101">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Group / Category</label>
+            <input type="text" name="group_title" class="form-control form-control-sm"
+                   value="{{ channel.group_title if channel else '' }}"
+                   placeholder="Entertainment">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">TVG-ID (EPG)</label>
+            <input type="text" name="tvg_id" class="form-control form-control-sm"
+                   value="{{ channel.tvg_id if channel else '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Logo URL</label>
+            <input type="url" name="logo_url" class="form-control form-control-sm"
+                   value="{{ channel.logo_url if channel else '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Stream Type</label>
+            <select name="stream_type" class="form-select form-select-sm">
+              <option value="auto"       {% if not channel or channel.stream_type=='auto'       %}selected{% endif %}>
+                Auto-detect</option>
+              <option value="live"       {% if channel and channel.stream_type=='live'           %}selected{% endif %}>
+                Live</option>
+              <option value="vod_movie"  {% if channel and channel.stream_type=='vod_movie'      %}selected{% endif %}>
+                VOD — Movie</option>
+              <option value="vod_series" {% if channel and channel.stream_type=='vod_series'     %}selected{% endif %}>
+                VOD — Series</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Tags</label>
+            <input type="text" name="tags" class="form-control form-control-sm" 
+                   value="{{ tags }}" placeholder="uk, sport, hd (comma separated)">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small">Notes</label>
+            <textarea name="notes" class="form-control form-control-sm"
+                      rows="2">{{ channel.notes if channel else '' }}</textarea>
+          </div>
+
+          <div class="d-flex flex-column gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-floppy me-1"></i>Save Channel Configuration
+            </button>
+          </form> {% if channel %}
+          <div class="row g-2 mt-1">
+            <div class="col-6">
+              <form method="post">
+                <input type="hidden" name="_action" value="probe">
+                <button type="submit" class="btn btn-outline-warning btn-sm w-100">
+                  <i class="bi bi-broadcast me-1"></i>Probe Sources
+                </button>
+              </form>
+            </div>
+            <div class="col-6">
+              <form method="post">
+                <input type="hidden" name="_action" value="auto-link">
+                <button type="submit" class="btn btn-outline-info btn-sm w-100">
+                  <i class="bi bi-magic me-1"></i>Auto Link TVG
+                </button>
+              </form>
+            </div>
+          </div>
+          {% endif %}
+          </div>
+
+          {% if channel %}
+          <hr class="my-3">
+          <form method="post" onsubmit="return confirm('Delete this channel permanently?')">
+            <input type="hidden" name="_action" value="delete">
+            <button type="submit" class="btn btn-outline-danger btn-sm w-100">
+              <i class="bi bi-trash me-1"></i>Delete Channel
+            </button>
+          </form>
+          {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-8">
+    <div class="card border-0 bg-body-secondary h-100">
+      <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-link-45deg me-2"></i>Linked Raw Stream Sources</span>
+        <a href="/ui/link?q={{ channel.name|urlencode if channel else '' }}" class="btn btn-xs btn-primary btn-sm">
+          <i class="bi bi-plus-lg me-1"></i>Link Streams Panel
+        </a>
+      </div>
+      <div class="card-body">
+        {% if entries %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead>
+              <tr>
+                <th>Source File/URL</th>
+                <th>Raw Name</th>
+                <th>Probe Status</th>
+                <th>Resolution Details</th>
+                <th>Bitrate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in entries %}
+              <tr>
+                <td class="fw-semibold text-info">{{ e.source_name }}</td>
+                <td>{{ e.raw_name or e.stream_key }}</td>
+                <td>
+                  {% if e.probe_status == 'ok' %}
+                    <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>OK</span>
+                  {% elif e.probe_status == 'error' %}
+                    <span class="badge bg-danger" title="{{ e.probe_error }}"><i class="bi bi-exclamation-triangle me-1"></i>Error</span>
+                  {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-question-circle me-1"></i>Unprobed</span>
+                  {% endif %}
+                </td>
+                <td class="font-monospace">
+                  {% if e.probe_width %}
+                    {{ e.probe_width }}x{{ e.probe_height }} @ {{ "%.2f"|format(e.probe_fps or 0) }} FPS
+                  {% else %}
+                    <span class="text-secondary">—</span>
+                  {% endif %}
+                </td>
+                <td class="font-monospace">
+                  {% if e.probe_bitrate %}
+                    {{ (e.probe_bitrate // 1000) }} kbps
+                  {% else %}
+                    <span class="text-secondary">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card border-0 bg-dark mt-4">
+          <div class="card-header small fw-semibold text-secondary">
+            <i class="bi bi-bar-chart me-1"></i>Source Stream Resolution Rankings
+          </div>
+          <div class="card-body py-3">
+            {% for e in entries|sort(attribute='quality_score', reverse=True) %}
+            {% if e.probe_width %}
+            <div class="mb-2">
+              <div class="d-flex justify-content-between small mb-1">
+                <span class="text-truncate text-secondary" style="max-width:60%">
+                  {{ e.source_name }} — {{ e.raw_name }}
+                </span>
+                <span class="text-light font-monospace">
+                  {{ e.probe_width }}x{{ e.probe_height }}
+                </span>
+              </div>
+              {% set max_score = (entries|selectattr('probe_width')|map(attribute='quality_score')|max) %}
+              {% set pct = ((e.quality_score / max_score * 100)|int) if max_score else 0 %}
+              <div class="progress" style="height:6px">
+                <div class="progress-bar {% if loop.first %}bg-success{% else %}bg-info{% endif %}"
+                     style="width:{{ pct }}%"></div>
+              </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+
+        {% else %}
+        <div class="text-center text-secondary py-5">
+          <i class="bi bi-hdd-network fs-1 d-block mb-2"></i>
+          No stream profiles linked directly to this channel yet. 
+          <p class="small mt-2">Use the button above to bind raw IPTV M3U streams to this channel slot.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-4">
+
+  <div class="col-12 col-xl-4">
+
+    <div class="card border-0 bg-body-secondary mb-3">
+      <div class="card-body text-center py-3">
+        {% set logo = ('/logos/' + channel.logo_local) if (channel and channel.logo_local) else (channel.logo_url if channel else '') %}
+        {% if logo %}\n          <img src="{{ logo }}" class="mb-2"
+               style="height:80px;max-width:140px;object-fit:contain;background:#2d3035;border-radius:8px;padding:6px">
+        {% else %}
+          <div class="d-flex align-items-center justify-content-center mb-2 mx-auto"
+               style="width:80px;height:80px;background:#2d3035;border-radius:8px">
+            <i class="bi bi-tv fs-2 text-secondary"></i>
+          </div>
+        {% endif %}
+        {% if channel %}
+        <form method="post" class="mt-1">
+          <input type="hidden" name="_action" value="download-logo">
+          <button type="submit" class="btn btn-outline-secondary btn-sm w-100"
+                  {% if not channel.logo_url %}disabled title="Set a logo URL first"{% endif %}>
+            <i class="bi bi-cloud-download me-1"></i>Download Logo
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card border-0 bg-body-secondary">
+      <div class="card-header bg-dark bg-opacity-20 fw-semibold py-2 small">
+        <i class="bi bi-sliders me-1"></i>Properties
+      </div>
+      <div class="card-body py-3">
+        <form method="post">
+          <input type="hidden" name="_action" value="save">
+
+          <div class="mb-2.5">
+            <label class="form-label small text-secondary mb-1">Channel ID</label>
+            <input type="text" name="id" class="form-control form-control-sm font-monospace"
+                   value="{{ channel.id if channel else '' }}" {% if channel %}readonly{% else %}required{% endif %}>
+            {% if not channel %}<div class="form-text mt-0.5" style="font-size:0.75rem;">Lowercase, no spaces. Primary identifier.</div>{% endif %}
+          </div>
+
+          <div class="mb-2.5">
+            <label class="form-label small text-secondary mb-1">Display Name</label>
+            <input type="text" name="name" class="form-control form-control-sm"
+                   value="{{ channel.name if channel else '' }}" required>
+          </div>
+
+          <div class="row g-2 mb-2.5">
+            <div class="col-6">
+              <label class="form-label small text-secondary mb-1">Number</label>
+              <input type="number" name="number" class="form-control form-control-sm font-monospace"
+                     value="{{ channel.number if (channel and channel.number is not none) else '' }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-secondary mb-1">Group Title</label>
+              <input type="text" name="group_title" class="form-control form-control-sm text-truncate"
+                     value="{{ channel.group_title if channel else '' }}" list="groupSuggestions">
+              <datalist id="groupSuggestions">
+                {% for g in groups %}<option value="{{ g }}">{% endfor %}
+              </datalist>
+            </div>
+          </div>
+
+          <div class="mb-2.5">
+            <label class="form-label small text-secondary mb-1">TVG-ID String Alignment</label>
+            <input type="text" name="tvg_id" class="form-control form-control-sm font-monospace"
+                   value="{{ channel.tvg_id if channel else '' }}">
+          </div>
+
+          <div class="mb-2.5">
+            <label class="form-label small text-secondary mb-1">Remote Logo URL</label>
+            <input type="url" name="logo_url" class="form-control form-control-sm"
+                   value="{{ channel.logo_url if channel else '' }}">
+          </div>
+
+          <div class="mb-2.5">
+            <label class="form-label small text-secondary mb-1">Stream Mode Routing Overrule</label>
+            <select name="stream_type" class="form-select form-select-sm">
+              {% set s_type = channel.stream_type if channel else 'auto' %}
+              <option value="auto" {% if s_type == 'auto' %}selected{% endif %}>Auto-Detect Mode Flow</option>\n              <option value="live" {% if s_type == 'live' %}selected{% endif %}>Force Live Transcode</option>
+              <option value="vod_movie" {% if s_type == 'vod_movie' %}selected{% endif %}>Force Direct VOD Movie Passthrough</option>
+              <option value="vod_series" {% if s_type == 'vod_series' %}selected{% endif %}>Force Direct VOD Series Passthrough</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small text-secondary mb-1">Notes / Structural Metadata Flags</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2">{{ channel.notes if channel else '' }}</textarea>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm flex-grow-1 fw-semibold">
+              <i class="bi bi-check-lg me-1"></i>Save Alignment
+            </button>
+            <a href="/ui/channels" class="btn btn-outline-secondary btn-sm px-3">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-8">
+
+    <div class="card border-0 bg-body-secondary mb-3">
+      <div class="card-header bg-dark bg-opacity-20 fw-semibold py-2 small d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-link-45deg me-1"></i>Linked Stream Profiles</span>
+        {% if channel %}
+        <a href="/ui/link?q={{ channel.name|urlencode }}" class="btn btn-xs btn-outline-primary py-0.5 px-2" style="font-size:0.75rem;">
+          <i class="bi bi-plus-circle me-1"></i>Manage Links
+        </a>
+        {% endif %}
+      </div>
+      <div class="card-body py-3">
+        {% if entries %}
+          {% for e in entries|sort(attribute='quality_score', reverse=True) %}
+          <div class="mb-3 p-2 rounded bg-body-tertiary border border-secondary border-opacity-10">
+            <div class="d-flex justify-content-between align-items-center small mb-1">
+              <div class="text-truncate me-2" style="max-width: 75%;" title="{{ e.source_name }} — {{ e.raw_name }}">
+                <span class="badge bg-dark text-secondary font-monospace p-1 me-1" style="font-size:0.65rem;">{{ e.source_name }}</span>
+                <span class="text-light fw-medium">{{ e.raw_name }}</span>
+              </div>
+              
+              <form method="post" onsubmit="return confirm('Remove this stream profile linkage from this channel?');" class="m-0">
+                <input type="hidden" name="_action" value="unlink_entry">
+                <input type="hidden" name="entry_id" value="{{ e.id }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1.5 font-monospace" style="font-size: 0.7rem;" title="Sever alignment linkage connection">
+                  <i class="bi bi-x-circle me-1"></i>Remove
+                </button>
+              </form>
+            </div>
+
+            {% if e.probe_width %}
+            <div class="d-flex justify-content-between align-items-center mt-1 text-secondary" style="font-size: 0.75rem;">
+              <span class="font-monospace">Resolution: {{ e.probe_width }}x{{ e.probe_height }}</span>
+              <span class="font-monospace">{{ e.probe_codec }} · {{ (e.probe_fps)|round(2) if e.probe_fps else '—' }} FPS</span>
+            </div>
+            
+            {% set max_score = (entries|selectattr('probe_width')|map(attribute='quality_score')|max) %}
+            {% set pct = ((e.quality_score / max_score * 100)|int) if max_score else 0 %}
+            <div class="progress mt-1.5" style="height:5px">
+              <div class="progress-bar {% if loop.first %}bg-success{% else %}bg-info{% endif %}" style="width:{{ pct }}%"></div>
+            </div>
+            {% else %}
+            <div class="text-secondary italic mt-1" style="font-size:0.75rem; font-style: italic;">
+              Stream unprobed or raw codec structure specifications unknown.
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="text-center text-secondary py-5">
+            <i class="bi bi-hdd-network fs-1 d-block mb-2 text-opacity-50"></i>
+            No stream profiles linked directly to this channel yet.
+            <p class="small mt-2 mb-0">Use the workspace mapping center to route incoming M3U feeds onto this structural channel alignment profile slot.</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if channel %}
+    <div class="card border-0 bg-body-secondary">
+      <div class="card-header bg-dark bg-opacity-20 fw-semibold py-2 small">
+        <i class="bi bi-tags me-1"></i>Assigned Routing Tags
+      </div>
+      <div class="card-body py-3">
+        <form method="post">
+          <input type="hidden" name="_action" value="update-tags">
+          <div class="d-flex flex-wrap gap-3 align-items-center mb-3">
+            {% for t in all_tags %}
+              {% set checked = t.name in current_tags %}
+              <div class="form-check form-check-inline m-0">
+                <input class="form-check-input" type="checkbox" name="tags" value="{{ t.name }}" 
+                       id="tag-{{ loop.index }}" {% if checked %}checked{% endif %}>
+                <label class="form-check-label fw-medium small px-1.5 py-0.5 rounded" for="tag-{{ loop.index }}"
+                       style="background: {{ t.color }}15; color: {{ t.color }}; border: 1px solid {{ t.color }}30;">
+                  {{ t.name }}
+                </label>
+              </div>
+            {% else %}
+              <span class="text-secondary small font-monospace">No administrative system filtering tags registered.</span>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-outline-info btn-sm fw-medium">
+            <i class="bi bi-save me-1"></i>Update Assigned Tags
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+</div>
+
+{% endblock %}
