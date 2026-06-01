@@ -51,9 +51,9 @@ import db
 import source_manager as sm
 import strm_manager
 from stream_manager import (FFmpegStream, ProbeResult, VodPipeStream,
-                             channel_hls_url, is_vod, kill_pid,
-                             make_output_dir, playlist_path,
-                             probe_stream, remove_output_dir)
+                             channel_hls_url, extract_metadata_from_log,
+                             is_vod, kill_pid, make_output_dir,
+                             playlist_path, probe_stream, remove_output_dir)
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -221,23 +221,27 @@ def channel_vod_url(channel_id: str) -> str:
 def _start_stream_for_entry(entry, channel_id: str,
                              channel_name: str) -> tuple[str | None, str]:
     """
-    Probe entry, launch ffmpeg (HLS for live, registered-but-no-process for VOD pipe),
+    Launch ffmpeg (HLS for live, registered-but-no-process for VOD pipe),
     update DB. Returns (stream_id, error_message).
+
+    Live streams no longer call probe_stream() on the hot path — metadata
+    (codec, resolution, fps, bitrate) is extracted asynchronously from
+    ffmpeg's own stderr log after the stream is confirmed running.
+
+    VOD pipe streams still probe synchronously because we need to confirm
+    the URL is reachable before handing it to a per-request ffmpeg process.
     """
     source      = db.get_source(entry["source_id"])
     stream_type = entry["stream_type"]
     vod         = is_vod(stream_type)
 
-    # VOD pipe streams don't use HLS segments or occupy a concurrent slot.
-    # We just probe, record the stream, and return — the actual ffmpeg process
-    # is spawned per-request in the /vod/<channel_id> endpoint.
+    # ── VOD pipe — probe synchronously to validate URL before registering ──
     if vod:
         probe: ProbeResult = probe_stream(entry["full_url"])
         if not probe.ok:
             return None, f"Source unavailable: {probe.error}"
 
         stream_id = uuid.uuid4().hex
-        # No output_dir needed for pipe streams
         db.create_stream(
             stream_id, channel_id, entry["id"], entry["source_id"],
             channel_name, entry["stream_key"], entry["full_url"],
@@ -258,15 +262,11 @@ def _start_stream_for_entry(entry, channel_id: str,
                  probe.fps, stream_type)
         return stream_id, ""
 
-    # ── Live stream — HLS via ffmpeg ──────────────────────────────────────────
+    # ── Live stream — start ffmpeg immediately, no blocking probe ────────────
     if source:
         max_c = source["max_concurrent"]
         if max_c > 0 and db.get_source_active_count(entry["source_id"]) >= max_c:
             return None, f"Source '{source['name']}' concurrent limit reached ({max_c})"
-
-    probe: ProbeResult = probe_stream(entry["full_url"])
-    if not probe.ok:
-        return None, f"Source unavailable: {probe.error}"
 
     stream_id  = uuid.uuid4().hex
     output_dir = make_output_dir(stream_id)
@@ -289,18 +289,37 @@ def _start_stream_for_entry(entry, channel_id: str,
     with _lock:
         _procs[stream_id] = ffmpeg
 
+    # Mark active immediately with unknown metadata so the channel is
+    # playable right away. Metadata will be filled in by the async worker.
     db.set_stream_active(
         stream_id, pid,
-        width=probe.width, height=probe.height,
-        fps=probe.fps, codec=probe.codec, bitrate=probe.bitrate,
+        width=0, height=0, fps=0.0, codec="?", bitrate=0,
     )
-    db.update_entry_probe(
-        entry["id"], "ok",
-        codec=probe.codec, width=probe.width, height=probe.height,
-        fps=probe.fps, bitrate=probe.bitrate,
-    )
-    log.info("[%s] Live stream active — %s %dx%d@%.2ffps",
-             stream_id, probe.codec, probe.width, probe.height, probe.fps)
+
+    # Parse ffmpeg's own log for metadata — no extra network round-trip.
+    entry_id = entry["id"]
+    def _on_metadata(probe: ProbeResult):
+        if probe.ok:
+            db.set_stream_active(
+                stream_id, pid,
+                width=probe.width, height=probe.height,
+                fps=probe.fps, codec=probe.codec, bitrate=probe.bitrate,
+            )
+            db.update_entry_probe(
+                entry_id, "ok",
+                codec=probe.codec, width=probe.width, height=probe.height,
+                fps=probe.fps, bitrate=probe.bitrate,
+            )
+            log.info("[%s] Metadata — %s %dx%d@%.2ffps %dbps",
+                     stream_id, probe.codec, probe.width, probe.height,
+                     probe.fps, probe.bitrate)
+        else:
+            log.warning("[%s] Metadata parse failed (non-fatal): %s",
+                        stream_id, probe.error)
+
+    ffmpeg.fetch_metadata_async(_on_metadata)
+
+    log.info("[%s] Live stream active (metadata async) — pid=%d", stream_id, pid)
     return stream_id, ""
 
 
